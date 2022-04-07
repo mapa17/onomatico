@@ -1,17 +1,15 @@
 from locale import T_FMT_AMPM
 from pathlib import Path
 from re import S
-from typing import Tuple, Dict, Callable
+from tkinter import W
+from typing import List, Tuple, Dict, Callable
 import copy
 import time
-import math
 
 from numpy import ndarray
 import pandas as pd
 from pandas import DataFrame, Series
 #from tqdm import tqdm
-
-
 import typer
 
 import torch
@@ -22,9 +20,10 @@ from torch.nn.modules.loss import _Loss
 import torch.nn.functional as F
 from torchtext.vocab import vocab, build_vocab_from_iterator
 
-from .Transformer import TransformerModel, generate_square_subsequent_mask
-from .Names import Names, NamesDataset
+from utils.Transformer import TransformerModel, generate_square_subsequent_mask
+from utils.Names import Names, NamesDataset
 
+import wandb
 
 app = typer.Typer()
 
@@ -161,49 +160,27 @@ def load_model(path : Path, model_cls : Callable, optimizer_cls : Callable, devi
     return loaded_model
 
 
-@app.command()
-def create_vocab(data : Path, storage : Path):
-    """Create a torch vocab for the given csv name list.
 
-    Args:
-        data (Path): List to names in csv file 
-        storage (Path): Output path of stored torch vocab file 
-    """
-    data_loader = Names(data, 8, torch.device('cpu'))
-    vocab = data_loader.names_dataset.vocab
+def _train_model(vocab : vocab, trn_data : Names, val_data : Names, model_cfg : Dict[str, float], epochs : int, device : torch.device, run_name : str, tag : str):
 
-    print(f"Storing vocab in {storage}")
-    torch.save(vocab, storage)
+    model = TransformerModel(
+        ntokens = model_cfg['ntokens'],
+        d_model = model_cfg['emsize'],
+        nhead = model_cfg['nhead'],
+        d_hid = model_cfg['d_hid'],
+        nlayers = model_cfg['nlayers'],
+        dropout = model_cfg['dropout']).to(device)
 
-@app.command()
-def train_model(data : Path, vocab_storage : Path, epochs : int, model_storage : Path) :
-    """Train a transformer on given training data and vocab.
-
-    Args:
-        data (Path): Path to directory containing `training.csv` and `validation.csv`
-        vocab_storage (Path): Path to vocab file
-        epochs (int): Number of epochs to train model on
-        model_storage (Path): Output location where to store trained model
-    """
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    vocab = torch.load(vocab_storage)
-    trn_data = Names(data / "training.csv", 8, device, vocab=vocab)
-    # Make sure to use the same vocab for validation as for training
-    val_data = Names(data / "validation.csv", 8, device, vocab=vocab)
-
-    # Transformer configuration
-    ntokens = len(vocab)  # size of vocabulary
-    emsize = 20  # embedding dimension (output of the encoder)
-    d_hid = 40  # dimension of the feedforward network model in nn.TransformerEncoder
-    nlayers = 2  # number of nn.TransformerEncoderLayer in nn.TransformerEncoder
-    nhead = 4  # number of heads in nn.MultiheadAttention
-    dropout = 0.2  # dropout probability
-    model = TransformerModel(ntokens, emsize, nhead, d_hid, nlayers, dropout).to(device)
+    wandb.init(
+        project="onomatico",
+        name=run_name,
+        notes="",
+        tags=[tag,],
+        config=model_cfg)
+    wandb.watch(model)
 
     loss_fun = nn.CrossEntropyLoss()
-    lr = 0.5  # learning rate
-    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    optimizer = torch.optim.SGD(model.parameters(), lr=model_cfg['lr'])
 
     best_val_loss = float('inf')
     best_epoch = 0
@@ -225,34 +202,27 @@ def train_model(data : Path, vocab_storage : Path, epochs : int, model_storage :
             best_model = copy.deepcopy(model)
             best_optimizer = copy.deepcopy(optimizer)
             best_epoch = epoch
-
-    print(f"Storing model to {model_storage} ...")
-    save_model(model_storage, best_model, best_optimizer, best_epoch, best_val_loss, str(device))
-
-
-@app.command()
-def generate(
-    model_storage : Path = typer.Argument(..., exists=True, readable=True),
-    vocab_storage : Path = typer.Argument(..., exists=True, readable=True),
-    num_names : int = typer.Argument(..., min=1),
-    names_storage : Path = typer.Argument(..., writable=True),
-    max_iterations : int = 100) :
-    """Predict names using a previously trained model and vocab.
-
-    Args:\n
-        model_storage (Path): Path to trained model \n
-        vocab_storage (Path): Path to vocab file \n
-        num_names (int): Number of names to generate \n
-        names_storage (Path): Output location of where to store names \n
-        max_iterations (int): Max length of generated names. \n
-    """
+        
+        wandb.log({"val_loss": val_loss, "epoch": epoch, "trn_loss": trn_loss})
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    lm = load_model(model_storage, TransformerModel, torch.optim.SGD, str(device))
-    vocab = torch.load(vocab_storage)
-    model = lm['model'].eval()
+    return best_model, best_optimizer, best_epoch, best_val_loss
 
-    batch_size=32
+
+def _generate_names(model : TransformerModel, vocab : vocab, batch_size : int, num_names : int, max_iterations : int, device : torch.device) -> DataFrame:
+    """Use the given model to generate `num_names` with a maximum sequence length of `max_iterations`
+    and translate tokens using the given `vocab`.
+
+    Args:
+        model (TransformerModel): _description_
+        vocab (vocab): _description_
+        batch_size (int): _description_
+        num_names (int): _description_
+        max_iterations (int): _description_
+        device (torch.device): _description_
+
+    Returns:
+        DataFrame: _description_
+    """
     start_tk = vocab[NamesDataset.start_token]
     stop_tk = vocab[NamesDataset.stop_token]
 
@@ -286,14 +256,13 @@ def generate(
         batch_names = [''.join(vocab.lookup_tokens(tokens[1:sl])) for tokens, sl in zip(token_idx, seq_length)]
 
     names.extend(batch_names[:last_batch_num_names])
-    names.insert(0, 'name') # Add column name to have identical structure as the training data
+    #names.insert(0, 'name') # Add column name to have identical structure as the training data
 
-    print(f"Writing names to {names_storage} ...")
-    with open(names_storage, 'w') as f:
-        f.writelines('\n'.join(names))
+    names_df = pd.DataFrame(data={'name': names})
+    return names_df
 
 
-def name_comparison(tgt_names : Series, syn_names : Series) -> Dict[str, float] :
+def _name_comparison(tgt_names : Series, syn_names : Series) -> Dict[str, float] :
     unique_names = syn_names.nunique() / syn_names.shape[0]
     
     # Name overlap
@@ -326,6 +295,110 @@ def name_comparison(tgt_names : Series, syn_names : Series) -> Dict[str, float] 
     }
     return metrics
 
+
+def tune(vocab_storage : Path = "WD/vocab.pt", data : Path = 'data'):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Make sure to use the same vocab for both training and validation
+    vocab = torch.load()
+    trn_data = Names(data / "training.csv", 8, device, vocab=vocab)
+    val_data = Names(data / "validation.csv", 8, device, vocab=vocab)
+
+    best_model, best_optimizer, best_epoch, best_val_loss = _train_model(vocab, trn_data, val_data, model_cfg, epochs, device, name, tag)
+    
+
+
+    
+
+########################### CLI exposed commands ###############################
+
+
+@app.command()
+def create_vocab(data : Path, storage : Path):
+    """Create a torch vocab for the given csv name list.
+
+    Args:
+        data (Path): List to names in csv file 
+        storage (Path): Output path of stored torch vocab file 
+    """
+    data_loader = Names(data, 8, torch.device('cpu'))
+    vocab = data_loader.names_dataset.vocab
+
+    print(f"Storing vocab in {storage}")
+    torch.save(vocab, storage)
+
+
+
+@app.command()
+def train_model(data : Path, vocab_storage : Path, epochs : int, model_storage : Path, name : str = "", tag : str = "") :
+    """Train a transformer on given training data and vocab.
+
+    Args:
+        data (Path): Path to directory containing `training.csv` and `validation.csv`
+        vocab_storage (Path): Path to vocab file
+        epochs (int): Number of epochs to train model on
+        model_storage (Path): Output location where to store trained model
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Make sure to use the same vocab for both training and validation
+    vocab = torch.load(vocab_storage)
+    trn_data = Names(data / "training.csv", 8, device, vocab=vocab)
+    val_data = Names(data / "validation.csv", 8, device, vocab=vocab)
+
+    # Transformer configuration
+    ntokens = len(vocab)  # size of vocabulary
+    emsize = 20  # embedding dimension (output of the encoder)
+    d_hid = 40  # dimension of the feedforward network model in nn.TransformerEncoder
+    nlayers = 2  # number of nn.TransformerEncoderLayer in nn.TransformerEncoder
+    nhead = 4  # number of heads in nn.MultiheadAttention
+    dropout = 0.2  # dropout probability
+    lr = 0.5 # learning rate
+
+    model_cfg = {
+        'ntokens': ntokens,
+        'emsize': emsize,
+        'd_hid': d_hid,
+        'nlayers': nlayers,
+        'nhead': nhead,
+        'dropout': dropout,
+        'lr' : lr,
+    }
+
+    best_model, best_optimizer, best_epoch, best_val_loss = _train_model(vocab, trn_data, val_data, model_cfg, epochs, device, name, tag)
+    print(f"Storing model to {model_storage} ...")
+    save_model(model_storage, best_model, best_optimizer, best_epoch, best_val_loss, str(device))
+
+
+
+@app.command()
+def generate(
+    model_storage : Path = typer.Argument(..., exists=True, readable=True),
+    vocab_storage : Path = typer.Argument(..., exists=True, readable=True),
+    num_names : int = typer.Argument(..., min=1),
+    names_storage : Path = typer.Argument(..., writable=True),
+    max_iterations : int = 100) :
+    """Predict names using a previously trained model and vocab.
+
+    Args:\n
+        model_storage (Path): Path to trained model \n
+        vocab_storage (Path): Path to vocab file \n
+        num_names (int): Number of names to generate \n
+        names_storage (Path): Output location of where to store names \n
+        max_iterations (int): Max length of generated names. \n
+    """
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    lm = load_model(model_storage, TransformerModel, torch.optim.SGD, str(device))
+    vocab = torch.load(vocab_storage)
+    model = lm['model'].eval()
+
+    names_df = _generate_names(model, vocab, batch_size=32, num_names=num_names, device=device, max_iterations=max_iterations)
+
+    print(f"Writing names to {names_storage} ...")
+    names_df.to_csv(names_storage, index=False)
+    
+
 @app.command()
 def compare(
     tgt_names_storage : Path = typer.Argument(..., exists=True, readable=True),
@@ -341,8 +414,12 @@ def compare(
     syn_names = pd.read_csv(syn_names_storage)
 
     # Calculate metrics
-    metrics = name_comparison(tgt_names['name'], syn_names['name'])
+    metrics = _name_comparison(tgt_names['name'], syn_names['name'])
     print(metrics)
- 
+
 def main():
     app()
+
+
+if __name__ == '__main__':
+    main()

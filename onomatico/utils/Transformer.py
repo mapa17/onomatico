@@ -44,7 +44,7 @@ class PositionalEncoding(nn.Module):
 class TransformerModel(nn.Module):
     kwargs : Dict[str, None]
 
-    def __init__(self, ntoken: int, d_model: int, nhead: int, d_hid: int,
+    def __init__(self, ntokens: int, d_model: int, nhead: int, d_hid: int,
                  nlayers: int, dropout: float = 0.5):
         super().__init__()
 
@@ -58,9 +58,9 @@ class TransformerModel(nn.Module):
         self.pos_encoder = PositionalEncoding(d_model, dropout)
         encoder_layers = TransformerEncoderLayer(d_model, nhead, d_hid, dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
-        self.encoder = nn.Embedding(ntoken, d_model)
+        self.encoder = nn.Embedding(ntokens, d_model)
         self.d_model = d_model
-        self.decoder = nn.Linear(d_model, ntoken)
+        self.decoder = nn.Linear(d_model, ntokens)
 
         self.init_weights()
 

@@ -1,0 +1,47 @@
+program: onomatico/main.py
+method: tune 
+metric:
+  goal: minimize
+  name: val_loss 
+parameters:
+  nlayers:
+    max: 8
+    min: 1
+    distribution: int_uniform
+  dropout:
+    max: 0.6
+    min: 0.1
+    distribution: uniform
+  emsize:
+    distribution: categorical
+    values:
+    - 8
+    - 12    
+    - 16    
+    - 20    
+    - 24
+    - 32
+    - 40
+    - 64
+    - 128
+
+  nhead:
+    max: 8
+    min: 1
+    distribution: int_uniform
+  d_hid:
+    distribution: categorical
+    values:
+    - 8
+    - 12    
+    - 16    
+    - 20    
+    - 24
+    - 32
+    - 40
+    - 64
+    - 128
+  lr:
+    max: 1
+    min: 0.01
+    distribution: uniform
