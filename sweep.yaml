@@ -1,8 +1,17 @@
 program: onomatico/main.py
-method: tune 
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "tune"
+  - "WD/vocab.pt"
+  - "data"
+  - "20"
+  - ${args_no_hyphens}
+method: bayes 
 metric:
-  goal: minimize
   name: val_loss 
+  goal: minimize
 parameters:
   nlayers:
     max: 8
@@ -24,12 +33,14 @@ parameters:
     - 40
     - 64
     - 128
-
   nhead:
-    max: 8
-    min: 1
-    distribution: int_uniform
-  d_hid:
+    distribution: categorical
+    values:
+    - 1 
+    - 2    
+    - 4    
+    - 8    
+  dhid:
     distribution: categorical
     values:
     - 8

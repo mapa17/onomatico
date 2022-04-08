@@ -2,7 +2,7 @@ from locale import T_FMT_AMPM
 from pathlib import Path
 from re import S
 from tkinter import W
-from typing import List, Tuple, Dict, Callable
+from typing import List, Optional, Tuple, Dict, Callable
 import copy
 import time
 
@@ -54,7 +54,8 @@ def train(model: nn.Module, loss_fun : _Loss, optimizer : Optimizer, train_data 
         data = data.T
         targets = targets.T
 
-        output = model(data, src_mask)
+        output = model(data, src_mask) # output = [sequence_length, batch_size, emb_dim]
+
         # Transform the output and targets, show they work with the normal CrossEntropyLoss
         # function that expects an input [BS, output] and targets in shaped [BS]
         # from shape [BS, SeqLength, Vocab] -> [BS*SeqLength, Vocab]
@@ -161,26 +162,22 @@ def load_model(path : Path, model_cls : Callable, optimizer_cls : Callable, devi
 
 
 
-def _train_model(vocab : vocab, trn_data : Names, val_data : Names, model_cfg : Dict[str, float], epochs : int, device : torch.device, run_name : str, tag : str):
+def _train_model(trn_data : Names, val_data : Names, epochs : int, device : torch.device):
 
+    # Initialize wandb and make sure to access all paraemters through the wandb.config
+    # in order to enable hyper parameter sweeps
     model = TransformerModel(
-        ntokens = model_cfg['ntokens'],
-        d_model = model_cfg['emsize'],
-        nhead = model_cfg['nhead'],
-        d_hid = model_cfg['d_hid'],
-        nlayers = model_cfg['nlayers'],
-        dropout = model_cfg['dropout']).to(device)
+        ntokens = wandb.config['ntokens'],
+        d_model = wandb.config['emsize'],
+        nhead = wandb.config['nhead'],
+        d_hid = wandb.config['dhid'],
+        nlayers = wandb.config['nlayers'],
+        dropout = wandb.config['dropout']).to(device)
 
-    wandb.init(
-        project="onomatico",
-        name=run_name,
-        notes="",
-        tags=[tag,],
-        config=model_cfg)
     wandb.watch(model)
 
     loss_fun = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=model_cfg['lr'])
+    optimizer = torch.optim.SGD(model.parameters(), lr=wandb.config['lr'])
 
     best_val_loss = float('inf')
     best_epoch = 0
@@ -192,7 +189,7 @@ def _train_model(vocab : vocab, trn_data : Names, val_data : Names, model_cfg : 
         epoch_start_time = time.time()
         trn_loss = train(model, loss_fun, optimizer, trn_data, device)
         val_loss = evaluate(model, loss_fun, val_data, device)
-        #val_ppl = math.exp(val_loss) # Validation perplexity
+
         elapsed = time.time() - epoch_start_time
         print(f'| end of epoch {epoch:3d} | time: {elapsed:5.2f}s | '
             f'training loss {trn_loss:5.2f} | valid loss {val_loss:5.2f}')
@@ -237,11 +234,11 @@ def _generate_names(model : TransformerModel, vocab : vocab, batch_size : int, n
         seqs = torch.tensor([start_tk, ], dtype=torch.long).repeat(1, batch_size)
         for input_seq_length in range(1, max_iterations+1):
             mask = src_mask[:input_seq_length, :input_seq_length]
-            logits = model(seqs, mask)
+            logits = model(seqs, mask) # Logits have the shape [seq_length, batch_size, emb_dim]
 
-            # Use the model output (token probability) to sample concrete tokens.
-            token_dist = torch.nn.functional.softmax(logits[-1, :])
-            next_token = torch.multinomial(token_dist, 1).T
+            # Use the model output (token probability) of the last entry in the sequence to sample concrete tokens.
+            token_dist = torch.nn.functional.softmax(logits[-1, :], dim=1) # token_dist = [batch_size, emb_dim]
+            next_token = torch.multinomial(token_dist, 1).T # next_token = [1, batch_size]
 
             # Accumulate tokens
             seqs = torch.cat([seqs, next_token], dim=0)
@@ -296,21 +293,52 @@ def _name_comparison(tgt_names : Series, syn_names : Series) -> Dict[str, float]
     return metrics
 
 
-def tune(vocab_storage : Path = "WD/vocab.pt", data : Path = 'data'):
+########################### CLI exposed commands ###############################
+
+
+@app.command()
+def tune(vocab_storage : Path, data : Path, epochs : int, args : Optional[List[str]] = typer.Argument(None)):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Make sure to use the same vocab for both training and validation
-    vocab = torch.load()
+    vocab = torch.load(vocab_storage)
     trn_data = Names(data / "training.csv", 8, device, vocab=vocab)
     val_data = Names(data / "validation.csv", 8, device, vocab=vocab)
+    tgt_names = pd.read_csv(data/"names.csv")
 
-    best_model, best_optimizer, best_epoch, best_val_loss = _train_model(vocab, trn_data, val_data, model_cfg, epochs, device, name, tag)
-    
+    # Set up your default hyperparameters
+    hyperparameter_defaults_cfg = {
+        'ntokens': len(vocab),
+    }
 
+    # Update config with the provided command arguments (injected by the wandb sweep client)
+    for pair in args:
+        k, v = pair.split('=')
+        hyperparameter_defaults_cfg[k] = v
 
-    
+    wandb.init(
+        project="onomatico",
+        name=None,
+        notes="",
+        tags=None,
+        config=hyperparameter_defaults_cfg)
 
-########################### CLI exposed commands ###############################
+    # Build and train a model
+    best_model, best_optimizer, best_epoch, best_val_loss = _train_model(trn_data, val_data, epochs, device)
+
+    # Generate names
+    syn_names = _generate_names(best_model, vocab, batch_size=128, num_names=tgt_names.shape[0], max_iterations=100, device=device)
+
+    metrics = _name_comparison(tgt_names['name'], syn_names['name'])
+
+    #_= [wandb.run.summary[k] = metrics[k] for k in metrics.keys()]
+    wandb.summary.update(metrics)
+
+    # For wandb.Table, convert the dataframe to [['Tom LEHRER'], ['Marvin MINSKI']]
+    names_table = wandb.Table(columns=["name"], data=[[n,] for n in syn_names['name'].tolist()])
+    wandb.summary.update({"syn_names": names_table})
+
+    wandb.finish()
 
 
 @app.command()
@@ -349,7 +377,7 @@ def train_model(data : Path, vocab_storage : Path, epochs : int, model_storage :
     # Transformer configuration
     ntokens = len(vocab)  # size of vocabulary
     emsize = 20  # embedding dimension (output of the encoder)
-    d_hid = 40  # dimension of the feedforward network model in nn.TransformerEncoder
+    dhid = 40  # dimension of the feedforward network model in nn.TransformerEncoder
     nlayers = 2  # number of nn.TransformerEncoderLayer in nn.TransformerEncoder
     nhead = 4  # number of heads in nn.MultiheadAttention
     dropout = 0.2  # dropout probability
@@ -358,14 +386,21 @@ def train_model(data : Path, vocab_storage : Path, epochs : int, model_storage :
     model_cfg = {
         'ntokens': ntokens,
         'emsize': emsize,
-        'd_hid': d_hid,
+        'dhid': dhid,
         'nlayers': nlayers,
         'nhead': nhead,
         'dropout': dropout,
         'lr' : lr,
     }
 
-    best_model, best_optimizer, best_epoch, best_val_loss = _train_model(vocab, trn_data, val_data, model_cfg, epochs, device, name, tag)
+    wandb.init(
+        project="onomatico",
+        name=name,
+        notes="",
+        tags=[tag,],
+        config=model_cfg)
+
+    best_model, best_optimizer, best_epoch, best_val_loss = _train_model(trn_data, val_data, epochs, device)
     print(f"Storing model to {model_storage} ...")
     save_model(model_storage, best_model, best_optimizer, best_epoch, best_val_loss, str(device))
 
