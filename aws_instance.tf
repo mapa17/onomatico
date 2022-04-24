@@ -1,4 +1,6 @@
-# User variables, path to private and public key used with AWS
+################################ User variables ################################
+
+# Path to private and public key used with AWS
 variable "prv_key_path" {
   default = "~/.ssh/aws_dev"
 }
@@ -7,21 +9,24 @@ variable "pub_key_path" {
   default = "~/.ssh/aws_dev.pub"
 }
 
+# AWS Instance type that should be deployed
 variable "instance_type"{
-  #default = "p3.2xlarge"
+  #default = "p2.xlarge"
   default = "t2.small"
 }
 
+# AWS AMI Image ID
 variable "ami"{
   default = "ami-0b879110efb09396b"
 }
 
+# AWS Region we want the instance to run in
 provider "aws" {
   region = "eu-central-1"
 }
 
 
-##################
+########################### Terraform Configuration ############################
 
 terraform {
   required_version = ">= 1.0.7"
@@ -32,6 +37,9 @@ resource "aws_key_pair" "pub-key" {
   public_key = file("${var.pub_key_path}")
 }
 
+# Define an AWS instance using the usr variables from above
+# Make user of the user_data (ie.e cloud init) option to define a bash script
+# to configure the instance at the first boot
 resource "aws_instance" "instance" {
   ami                         = "${var.ami}"
   instance_type               = "${var.instance_type}"
@@ -67,6 +75,8 @@ resource "null_resource" "cloud_init_wait" {
   depends_on = [aws_instance.instance]
 }
 
+# Define a basic security group that restricts inbound access to ssh but allows
+# all outgoing access
 resource "aws_security_group" "sg" {
   name        = "my_security_group"
   description = "Only allow inbound ssh access"
@@ -91,6 +101,8 @@ resource "aws_security_group" "sg" {
   }
 }
 
+# On termination of the script set an output varialbe containing the public ip
+# of the instance so we can access it using ssh
 output "instance-public-ip" {
   value = aws_instance.instance.public_ip
 }
