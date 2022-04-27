@@ -6,7 +6,6 @@ from typing import List, Optional, Tuple, Dict, Callable
 import copy
 import time
 
-from numpy import ndarray
 import pandas as pd
 from pandas import DataFrame, Series
 #from tqdm import tqdm
@@ -27,6 +26,7 @@ import wandb
 
 app = typer.Typer()
 
+
 def train(model: nn.Module, loss_fun : _Loss, optimizer : Optimizer, train_data : Names, device : torch.device) -> float:
     """Train given Transformer model applying causality masking.
 
@@ -40,7 +40,8 @@ def train(model: nn.Module, loss_fun : _Loss, optimizer : Optimizer, train_data 
 
     ntokens = len(train_data.names_dataset.vocab)
     
-    # Remove one from the padded sequence length because we have the shift in the training/target data. We want to predict the next character.
+    # Remove one from the padded sequence length because we have the shift in the training/target data.
+    # We want to predict the next character.
     sequence_length = train_data.get_padded_sequence_length()-1  
 
     # Create a additive mask that is used to exclude future sequence elements from
@@ -95,6 +96,7 @@ def evaluate(model: nn.Module, loss_fun : _Loss, eval_data: Names, device : torc
             output_flat = output.view(-1, ntokens)
             total_loss += loss_fun(output_flat, targets.reshape(-1)).item()
     return total_loss / num_batches 
+
 
 def save_model(path : Path, model: nn.Module, optimizer: torch.optim.Optimizer, epoch: int, loss: float, device : str) :
     torch.save({
@@ -159,7 +161,6 @@ def load_model(path : Path, model_cls : Callable, optimizer_cls : Callable, devi
     }
 
     return loaded_model
-
 
 
 def _train_model(trn_data : Names, val_data : Names, epochs : int, device : torch.device):
@@ -298,6 +299,10 @@ def _name_comparison(tgt_names : Series, syn_names : Series) -> Dict[str, float]
 
 @app.command()
 def tune(vocab_storage : Path, data : Path, epochs : int, args : Optional[List[str]] = typer.Argument(None)):
+    """
+    For hyperparameter tuning, train a model with the given vocab and evaluate
+    the data quality of the generated names.
+    """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Make sure to use the same vocab for both training and validation
@@ -356,7 +361,6 @@ def create_vocab(data : Path, storage : Path):
     torch.save(vocab, storage)
 
 
-
 @app.command()
 def train_model(data : Path, vocab_storage : Path, epochs : int, model_storage : Path, name : str = "", tag : str = "") :
     """Train a transformer on given training data and vocab.
@@ -405,7 +409,6 @@ def train_model(data : Path, vocab_storage : Path, epochs : int, model_storage :
     save_model(model_storage, best_model, best_optimizer, best_epoch, best_val_loss, str(device))
 
 
-
 @app.command()
 def generate(
     model_storage : Path = typer.Argument(..., exists=True, readable=True),
@@ -451,6 +454,7 @@ def compare(
     # Calculate metrics
     metrics = _name_comparison(tgt_names['name'], syn_names['name'])
     print(metrics)
+
 
 def main():
     app()

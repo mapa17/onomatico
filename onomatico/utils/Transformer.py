@@ -1,9 +1,9 @@
+import math
 import inspect
 from typing import Dict
 
 import torch
 from torch import nn, Tensor
-import math
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 
@@ -15,11 +15,14 @@ def generate_square_subsequent_mask(sz: int) -> Tensor:
 class PositionalEncoding(nn.Module):
     """Add absolute position encodings to embedding vectors.
 
+    For each embedding token add an (additative) position dependent term that
+    is calculated as an superposition of sinus and cosines functions that is
+    unique for each position in a sequence.
+
+    For a simple visual instruction watch: https://youtu.be/dichIcUZfOw?t=318
+
     Copied from
     https://pytorch.org/tutorials/beginner/transformer_tutorial.html#load-and-batch-data
-
-    Args:
-        nn (_type_): _description_
     """
 
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
@@ -41,11 +44,22 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
 
+
 class TransformerModel(nn.Module):
     kwargs : Dict[str, None]
 
     def __init__(self, ntokens: int, d_model: int, nhead: int, d_hid: int,
                  nlayers: int, dropout: float = 0.5):
+        """Transformer based generative model learning to reproduce token sequences.
+
+        Args:
+            ntokens (int): Size of the vocab used for training and generation
+            d_model (int): Embedding size of the input and output of the Feed Forward block of a single Transformer Layer
+            nhead (int): number of self attention heads
+            d_hid (int): Internal Embedding size of the Feed Forward block (emb sizes: d_model x d_hid x d_model)
+            nlayers (int): Number of Transformer Layers
+            dropout (float, optional): Dropout rate used for the Multi-headed attention and Feed Forward block. Defaults to 0.5.
+        """
         super().__init__()
 
         # Store the kwargs as a dict, so they can be saved with the model
@@ -72,6 +86,16 @@ class TransformerModel(nn.Module):
 
     def forward(self, src: Tensor, src_mask: Tensor) -> Tensor:
         """
+        Use the defined Model components and perform the actual computation.
+
+        As input we expect an tesor that contains multiple input sequences (all of 
+        the same length) and a mask tensor that indicates for each position in
+        the sequence what other positions can be used  in the self attention mechanism. 
+
+        The output are raw, unnormalized scores (logits) for each token position
+        that have to be fed to an activation function (e.g softmax) in order to
+        be interpreted as a probability distribution of the vocabulary.
+
         Args:
             src: Tensor, shape [seq_len, batch_size]
             src_mask: Tensor, shape [seq_len, seq_len]

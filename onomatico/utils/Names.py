@@ -44,6 +44,8 @@ class NamesDataset(Dataset):
         #self.names_tks = [torch.tensor(self.vocab(chr), dtype=torch.long) for chr in name for name in self.names]
         self.names_tks = []
         for name in self.names:
+            # Each name is translated into a sequence of the same length containing a start, stop and padding tokens if needed
+            # Example: Bob Miller -> <Bob Miller>!!!
             n = list(f"{NamesDataset.start_token}{name}{NamesDataset.stop_token}".ljust(self.padded_sequence_length, NamesDataset.padding_token))
             self.names_tks.append(torch.tensor(self.vocab(n), dtype=torch.long))
 
@@ -78,7 +80,17 @@ class Names(Iterator):
         return self.names_dataset.padded_sequence_length
  
     def get_batch(self) -> Tuple[torch.tensor, torch.tensor]:
+        """Returns a mini-batch of names, with the target is shifted by one position.
+
+        Returns:
+            Tuple[torch.tensor, torch.tensor]: Mini-batch of (training, target)
+        """
+        # Get a mini-batch of encoded name token sequences
         batch = next(self.names_iter)
+
+        # The target is shifted by one element
+        # data: "<Bob MILLER>!!", 
+        # target: "Bob MILLER>!!!"
         data = batch[:, :-1]
         target = batch[:, 1:]
         return data, target 
@@ -92,6 +104,8 @@ class Names(Iterator):
     def __next__(self) -> Tuple[torch.tensor, torch.tensor]:
         """Wrap the iterator generated from the DataLoader.
         Make sure to get refresh the iterator once it is emptied.
+        So for a single epoch we reach the stop token, but can read
+        from the iteration again in the next epoch.
 
         Raises:
             e: StopIteration
