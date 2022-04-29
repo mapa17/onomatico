@@ -324,11 +324,15 @@ def _name_comparison(tgt_names: Series, syn_names: Series) -> Dict[str, float]:
     tf = split_tgt_names[0]
     tl = split_tgt_names[1]
 
+    SF = list(sf)
+    SL = list(sl)
+    TF = list(tf)
+    TL = list(tl)
     identical_first_names = (
-        sum([1 if n in list(sf) else 0 for n in list(tf)]) / sf.shape[0]
+        sum([1 if n in TF else 0 for n in SF]) / len(SF) 
     )
     identical_last_names = (
-        sum([1 if n in list(sl) else 0 for n in list(tl)]) / sl.shape[0]
+        sum([1 if n in TL else 0 for n in SL]) / len(SL) 
     )
 
     avg_sf = sf.str.len().mean()
