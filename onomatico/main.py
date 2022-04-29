@@ -27,7 +27,7 @@ import wandb
 app = typer.Typer()
 
 
-def train(
+def _train(
     model: nn.Module,
     loss_fun: _Loss,
     optimizer: Optimizer,
@@ -82,7 +82,7 @@ def train(
     return total_loss / num_batches
 
 
-def evaluate(
+def _evaluate(
     model: nn.Module, loss_fun: _Loss, eval_data: Names, device: torch.device
 ) -> float:
     model.eval()  # turn on evaluation mode
@@ -188,7 +188,7 @@ def load_model(
     return loaded_model
 
 
-def _train_model(trn_data: Names, val_data: Names, epochs: int, device: torch.device):
+def _train_model(trn_data: Names, val_data: Names, epochs: int, device: torch.device, disable_wandb : bool = False):
 
     # Initialize wandb and make sure to access all paraemters through the wandb.config
     # in order to enable hyper parameter sweeps
@@ -201,7 +201,8 @@ def _train_model(trn_data: Names, val_data: Names, epochs: int, device: torch.de
         dropout=wandb.config["dropout"],
     ).to(device)
 
-    wandb.watch(model)
+    if not disable_wandb:
+        wandb.watch(model)
 
     loss_fun = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=wandb.config["lr"])
@@ -214,8 +215,8 @@ def _train_model(trn_data: Names, val_data: Names, epochs: int, device: torch.de
     print("-" * 89)
     for epoch in range(1, epochs + 1):
         epoch_start_time = time.time()
-        trn_loss = train(model, loss_fun, optimizer, trn_data, device)
-        val_loss = evaluate(model, loss_fun, val_data, device)
+        trn_loss = _train(model, loss_fun, optimizer, trn_data, device)
+        val_loss = _evaluate(model, loss_fun, val_data, device)
 
         elapsed = time.time() - epoch_start_time
         print(
@@ -229,7 +230,8 @@ def _train_model(trn_data: Names, val_data: Names, epochs: int, device: torch.de
             best_optimizer = copy.deepcopy(optimizer)
             best_epoch = epoch
 
-        wandb.log({"val_loss": val_loss, "epoch": epoch, "trn_loss": trn_loss})
+        if not disable_wandb:
+            wandb.log({"val_loss": val_loss, "epoch": epoch, "trn_loss": trn_loss})
 
     return best_model, best_optimizer, best_epoch, best_val_loss
 
@@ -423,7 +425,7 @@ def vocab(data: Path, storage: Path) -> None:
         storage (Path): Output path of stored torch vocab file 
     """
     # The mini-batch size here is not really used
-    data_loader = Names(data, batch_size=8, dev=torch.device("cpu"))
+    data_loader = Names(data, batch_size=8, device=torch.device("cpu"))
     # Just extract and store the torchtext.vocab
     vocab = data_loader.names_dataset.vocab
 
@@ -439,6 +441,7 @@ def train(
     model_storage: Path,
     name: str = "",
     tag: str = "",
+    disable_wandb: bool = False
 ):
     """Train a transformer on given training data and vocab.
 
@@ -475,10 +478,14 @@ def train(
         "lr": lr,
     }
 
-    wandb.init(project="onomatico", name=name, notes="", tags=[tag,], config=model_cfg)
+    if not disable_wandb:
+        wandb.init(project="onomatico", name=name, notes="", tags=[tag,], config=model_cfg)
+    else:
+        # Ugly hack, overwrite wandb config by simple dic
+        wandb.config = model_cfg
 
     best_model, best_optimizer, best_epoch, best_val_loss = _train_model(
-        trn_data, val_data, epochs, device
+        trn_data, val_data, epochs, device, disable_wandb
     )
     print(f"Storing model to {model_storage} ...")
     save_model(
