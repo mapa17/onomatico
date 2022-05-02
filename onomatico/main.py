@@ -4,6 +4,7 @@ from tkinter import W
 from typing import List, Optional, Tuple, Dict, Callable
 import copy
 import time
+from pprint import pprint
 
 from onomatico.utils.Transformer import (
     TransformerModel,
@@ -333,7 +334,6 @@ def _name_comparison(tgt_names: Series, syn_names: Series) -> Dict[str, float]:
     SL = list(split_syn_names[1])
     TF = list(split_tgt_names[0])
     TL = list(split_tgt_names[1])
-    from pudb import set_trace as st; st()
 
     # Get list of most common names and their popularity
     tgt_f_stats = split_tgt_names[0].value_counts(normalize=True)
@@ -501,7 +501,7 @@ def train(
     dhid = 40  # dimension of the feedforward network model in nn.TransformerEncoder
     nlayers = 2  # number of nn.TransformerEncoderLayer in nn.TransformerEncoder
     nhead = 4  # number of heads in nn.MultiheadAttention
-    dropout = 0.0  # dropout probability
+    dropout = 0.1  # dropout probability
     lr = 0.5  # learning rate
 
     model_cfg = {
@@ -586,7 +586,7 @@ def compare(
 
     # Calculate metrics
     metrics = _name_comparison(tgt_names["name"], syn_names["name"])
-    print(metrics)
+    pprint(metrics)
 
 
 def main():
