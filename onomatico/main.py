@@ -307,27 +307,50 @@ def _generate_names(
 
 
 def _name_comparison(tgt_names: Series, syn_names: Series) -> Dict[str, float]:
+    """Calculate several metrics comparing the similarity between two lists of names.
+
+    Args:
+        tgt_names (Series): Target/Reference pandas Series of names
+        syn_names (Series): Other names
+
+    Returns:
+        Dict[str, float]: _description_
+    """
     unique_names = syn_names.nunique() / syn_names.shape[0]
 
-    # Name overlap
-    identical_names = (
-        sum([1 if n in list(syn_names) else 0 for n in list(tgt_names)])
-        / syn_names.shape[0]
-    )
+    # Name overlap, how many of the syn names are present in the target names
+    S = list(syn_names)
+    T = list(tgt_names)
+    identical_names = sum([1 if n in T else 0 for n in S]) / len(S)
 
-    #
-    split_syn_names = syn_names.str.split(" ", n=1, expand=True)
-    split_tgt_names = tgt_names.str.split(" ", n=1, expand=True)
+    # Remove empty or names that dont match "<First> <Last>" name
+    syn = syn_names.dropna()
+    tgt = tgt_names.dropna()
+    split_syn_names = syn.str.split(" ", n=1, expand=True).dropna()
+    split_tgt_names = tgt.str.split(" ", n=1, expand=True).dropna()
 
-    sf = split_syn_names[0]
-    sl = split_syn_names[1]
-    tf = split_tgt_names[0]
-    tl = split_tgt_names[1]
+    SF = list(split_syn_names[0])
+    SL = list(split_syn_names[1])
+    TF = list(split_tgt_names[0])
+    TL = list(split_tgt_names[1])
+    from pudb import set_trace as st; st()
 
-    SF = list(sf)
-    SL = list(sl)
-    TF = list(tf)
-    TL = list(tl)
+    # Get list of most common names and their popularity
+    tgt_f_stats = split_tgt_names[0].value_counts(normalize=True)
+    tgt_l_stats = split_tgt_names[1].value_counts(normalize=True)
+    tgt_f_top = tgt_f_stats.index[:3].values.tolist()
+    tgt_l_top = tgt_l_stats.index[:3].values.tolist()
+    tgt_f_top_popularity = tgt_f_stats.values[:3].sum()
+    tgt_l_top_popularity = tgt_l_stats.values[:3].sum()
+
+    syn_f_stats = split_syn_names[0].value_counts(normalize=True)
+    syn_l_stats = split_syn_names[1].value_counts(normalize=True)
+    syn_f_top = syn_f_stats.index[:3].values.tolist()
+    syn_l_top = syn_l_stats.index[:3].values.tolist()
+    syn_f_top_popularity = syn_f_stats.values[:3].sum()
+    syn_l_top_popularity = syn_l_stats.values[:3].sum()
+
+    # Name overlap for first and last name separately
     identical_first_names = (
         sum([1 if n in TF else 0 for n in SF]) / len(SF) 
     )
@@ -335,10 +358,11 @@ def _name_comparison(tgt_names: Series, syn_names: Series) -> Dict[str, float]:
         sum([1 if n in TL else 0 for n in SL]) / len(SL) 
     )
 
-    avg_sf = sf.str.len().mean()
-    avg_tf = tf.str.len().mean()
-    avg_sl = sl.str.len().mean()
-    avg_tl = tl.str.len().mean()
+    # Calculate average string length
+    avg_sf = sum([len(n) for n in SF]) / len(SF) 
+    avg_sl = sum([len(n) for n in SL]) / len(SL)
+    avg_tf = sum([len(n) for n in TF]) / len(TF)
+    avg_tl = sum([len(n) for n in TL]) / len(TL)
 
     metrics = {
         "unique_names": unique_names,
@@ -347,6 +371,14 @@ def _name_comparison(tgt_names: Series, syn_names: Series) -> Dict[str, float]:
         "identical_l": identical_last_names,
         "avg_f_diff": avg_sf - avg_tf,
         "avg_l_diff": avg_sl - avg_tl,
+        "top3_tgt_first_names": tgt_f_top,
+        "top3_tgt_first_name_popularity": tgt_f_top_popularity,
+        "top3_tgt_last_names": tgt_l_top,
+        "top3_tgt_last_name_popularity": tgt_l_top_popularity,
+        "top3_syn_first_names": syn_f_top,
+        "top3_syn_first_name_popularity": syn_f_top_popularity,
+        "top3_syn_last_names": syn_l_top,
+        "top3_syn_last_name_popularity": syn_l_top_popularity,
     }
     return metrics
 
@@ -433,7 +465,7 @@ def vocab(data: Path, storage: Path) -> None:
     # Just extract and store the torchtext.vocab
     vocab = data_loader.names_dataset.vocab
 
-    print(f"Storing vocab in {storage}")
+    print(f"Storing vocab (size {len(vocab)}) in {storage} ...")
     torch.save(vocab, storage)
 
 
@@ -469,7 +501,7 @@ def train(
     dhid = 40  # dimension of the feedforward network model in nn.TransformerEncoder
     nlayers = 2  # number of nn.TransformerEncoderLayer in nn.TransformerEncoder
     nhead = 4  # number of heads in nn.MultiheadAttention
-    dropout = 0.2  # dropout probability
+    dropout = 0.0  # dropout probability
     lr = 0.5  # learning rate
 
     model_cfg = {
