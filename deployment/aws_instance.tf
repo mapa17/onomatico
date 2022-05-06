@@ -33,7 +33,7 @@ terraform {
 }
 
 resource "aws_key_pair" "pub-key" {
-  key_name   = "pub-key"
+  key_name   = "TerraformMLTutorial"
   public_key = file("${var.pub_key_path}")
 }
 
@@ -78,7 +78,7 @@ resource "null_resource" "cloud_init_wait" {
 # Define a basic security group that restricts inbound access to ssh but allows
 # all outgoing access
 resource "aws_security_group" "sg" {
-  name        = "my_security_group"
+  name        = "TerraformMLTutorial_security_group"
   description = "Only allow inbound ssh access"
 
   ingress {
@@ -97,7 +97,7 @@ resource "aws_security_group" "sg" {
 
 
   tags = {
-    Name = "AWS_ML_DEV_INSTANCE"
+    Name = "TerraformMLTutorial_security_group"
   }
 }
 
