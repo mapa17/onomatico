@@ -57,7 +57,7 @@ class TransformerModel(nn.Module):
         nhead: int,
         d_hid: int,
         nlayers: int,
-        dropout: float = 0.5,
+        dropout: float = 0.2,
     ):
         """Transformer based generative model learning to reproduce token sequences.
 
@@ -97,7 +97,7 @@ class TransformerModel(nn.Module):
         """
         Use the defined Model components and perform the actual computation.
 
-        As input we expect an tesor that contains multiple input sequences (all of 
+        As input we expect an tensor that contains multiple input sequences (all of 
         the same length) and a mask tensor that indicates for each position in
         the sequence what other positions can be used  in the self attention mechanism. 
 

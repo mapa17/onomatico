@@ -3,6 +3,9 @@ import sys
 import argparse
 import pandas as pd
 
+"""Simple Helper script that is used split the dataset into training and validation data
+"""
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("names", help="csv file cotaining names")

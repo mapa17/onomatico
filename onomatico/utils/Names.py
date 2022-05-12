@@ -6,22 +6,21 @@ from pathlib import Path
 from typing import Iterator, Optional, Tuple
 from numpy import ndarray
 import pandas as pd
-from pandas import DataFrame
-
 
 class NamesDataset(Dataset):
+    """Load names dataset and provide them as bached tensor of specific size"""
+
     unk_token = "?"
     start_token = "<"
     stop_token = ">"
     padding_token = "!"
     names: ndarray
     padded_sequence_length: int
-    """Load names dataset and provide them as bached tensor of specific size"""
 
     def __init__(
         self, csv_file: Path, name_column: str = "name", vocab: Optional[vocab] = None
     ):
-        """Load the names in given csv file
+        """Create a torch Dataset that contains the names in a given csv file
 
         Args:
             csv_file (Path): _description_
@@ -32,9 +31,9 @@ class NamesDataset(Dataset):
         self.names = data[name_column].values
         self.max_sequence_length = data[name_column].str.len().max()
         self.padded_sequence_length = self.max_sequence_length + 2
-        self.__create_tokens(vocab)
+        self.__create_vocab_and_tokens(vocab)
 
-    def __create_tokens(self, vocab: Optional[vocab] = None):
+    def __create_vocab_and_tokens(self, vocab: Optional[vocab] = None):
         """Build a vocab based on the characters in `self.names`
         Build a list of equally sized tensors encoding the names with special
         start, stop and padding token.
@@ -52,11 +51,16 @@ class NamesDataset(Dataset):
                 ],
             )
             self.vocab.set_default_index(self.vocab[NamesDataset.unk_token])
-        # self.names_tks = [torch.tensor(self.vocab(chr), dtype=torch.long) for chr in name for name in self.names]
+        
+        # Note: This only makes sense for tiny datasets, as we are loading and expanding
+        # the training dataset into memory. For bigger datasets, use a generator
+        # pattern or combine pytorch [IterableDataset](https://pytorch.org/docs/stable/data.html#torch.utils.data.IterableDataset)
+        # with and pytorch [DataLoader](https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader)
+
         self.names_tks = []
         for name in self.names:
             # Each name is translated into a sequence of the same length containing a start, stop and padding tokens if needed
-            # Example: Bob Miller -> <Bob Miller>!!!
+            # Example: Bob MILLER -> <Bob MILLER>!!!
             n = list(
                 f"{NamesDataset.start_token}{name}{NamesDataset.stop_token}".ljust(
                     self.padded_sequence_length, NamesDataset.padding_token
@@ -72,6 +76,10 @@ class NamesDataset(Dataset):
 
 
 class Names(Iterator):
+    """Wraps a `NamesDataset` providing an iterator that is used during training, returning
+    mini batches of data points and raising StopIteration after one iteration over
+    the complete dataset (i.e. epoch).
+    """
     names_dataset: NamesDataset
     names_dl: DataLoader
     names_iter: Iterator
@@ -121,8 +129,8 @@ class Names(Iterator):
     def __next__(self) -> Tuple[torch.tensor, torch.tensor]:
         """Wrap the iterator generated from the DataLoader.
         Make sure to get refresh the iterator once it is emptied.
-        So for a single epoch we reach the stop token, but can read
-        from the iteration again in the next epoch.
+        So for a single epoch we raise a StopIteration exception, but can read
+        from the Dataset again in the next epoch.
 
         Raises:
             e: StopIteration

@@ -7,3 +7,6 @@ was created that combines each surname with a random selection of 10 first names
 resulting in 1000 name combinations.
 
 This training data is than split 9/1 into `training.csv` and `validation.csv`.
+
+The dataset `names_reverse.csv` contains the same names like `names.csv` but reverses
+the order between last and first name.
